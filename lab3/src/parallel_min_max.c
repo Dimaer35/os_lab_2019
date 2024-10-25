@@ -40,24 +40,18 @@ int main(int argc, char **argv) {
         switch (option_index) {
           case 0:
             seed = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 1:
             array_size = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 2:
             pnum = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 3:
             with_files = true;
             break;
 
-          defalut:
+          default:
             printf("Index %d is out of options\n", option_index);
         }
         break;
@@ -73,11 +67,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (optind < argc) {
-    printf("Has at least one no option argument\n");
-    return 1;
-  }
-
   if (seed == -1 || array_size == -1 || pnum == -1) {
     printf("Usage: %s --seed \"num\" --array_size \"num\" --pnum \"num\" \n",
            argv[0]);
@@ -91,24 +80,47 @@ int main(int argc, char **argv) {
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
 
+  int pipefd[2 * pnum]; // массив для хранения дескрипторов для всех каналов
+  if (!with_files) {
+    for (int i = 0; i < pnum; i++) {
+      if (pipe(pipefd + 2 * i) == -1) {
+        perror("pipe");
+        return 1;
+      }
+    }
+  }
+
+  int part_size = array_size / pnum;
+
   for (int i = 0; i < pnum; i++) {
     pid_t child_pid = fork();
     if (child_pid >= 0) {
-      // successful fork
+      // успешный fork
       active_child_processes += 1;
       if (child_pid == 0) {
-        // child process
+        // дочерний процесс
+        int start = i * part_size;
+        int end = (i == pnum - 1) ? array_size : start + part_size;
 
-        // parallel somehow
+        struct MinMax min_max = GetMinMax(array, start, end);
 
         if (with_files) {
-          // use files here
+          // запись результата в файл
+          char filename[256];
+          snprintf(filename, 256, "file_%d.txt", i);
+          FILE *file = fopen(filename, "w");
+          fprintf(file, "%d %d\n", min_max.min, min_max.max);
+          fclose(file);
         } else {
-          // use pipe here
+          // запись результата через pipe
+          close(pipefd[2 * i]); // закрываем сторону чтения
+          write(pipefd[2 * i + 1], &min_max.min, sizeof(int));
+          write(pipefd[2 * i + 1], &min_max.max, sizeof(int));
+          close(pipefd[2 * i + 1]); // закрываем сторону записи
         }
+        free(array);
         return 0;
       }
-
     } else {
       printf("Fork failed!\n");
       return 1;
@@ -116,8 +128,7 @@ int main(int argc, char **argv) {
   }
 
   while (active_child_processes > 0) {
-    // your code here
-
+    wait(NULL);
     active_child_processes -= 1;
   }
 
@@ -130,9 +141,18 @@ int main(int argc, char **argv) {
     int max = INT_MIN;
 
     if (with_files) {
-      // read from files
+      // чтение результата из файла
+      char filename[256];
+      snprintf(filename, 256, "file_%d.txt", i);
+      FILE *file = fopen(filename, "r");
+      fscanf(file, "%d %d", &min, &max);
+      fclose(file);
     } else {
-      // read from pipes
+      // чтение результата из pipe
+      close(pipefd[2 * i + 1]); // закрываем сторону записи
+      read(pipefd[2 * i], &min, sizeof(int));
+      read(pipefd[2 * i], &max, sizeof(int));
+      close(pipefd[2 * i]); // закрываем сторону чтения
     }
 
     if (min < min_max.min) min_max.min = min;
@@ -142,14 +162,14 @@ int main(int argc, char **argv) {
   struct timeval finish_time;
   gettimeofday(&finish_time, NULL);
 
-  double elapsed_time = (finish_time.tv_sec - start_time.tv_sec) * 1000.0;
-  elapsed_time += (finish_time.tv_usec - start_time.tv_usec) / 1000.0;
+  double time = (finish_time.tv_sec - start_time.tv_sec) * 1000.0;
+  time += (finish_time.tv_usec - start_time.tv_usec) / 1000.0;
 
   free(array);
 
   printf("Min: %d\n", min_max.min);
   printf("Max: %d\n", min_max.max);
-  printf("Elapsed time: %fms\n", elapsed_time);
+  printf("Time: %fms\n", time);
   fflush(NULL);
   return 0;
 }
